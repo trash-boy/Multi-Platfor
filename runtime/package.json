@@ -1,0 +1,8 @@
+{
+  "name": "mpf-runtime",
+  "private": true,
+  "description": "Pinned catbus CLI used by the backend as the platform adapter layer",
+  "dependencies": {
+    "catbus-cli": "^0.3.0"
+  }
+}

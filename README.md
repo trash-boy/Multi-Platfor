@@ -1,0 +1,104 @@
+# 聚合台：多平台聚合与发布（自部署版）
+
+聚合小红书、闲鱼、X、微博、抖音、B站的内容，并能一次写好、同时发布到多个平台和账号。
+
+- **账号管理**：网页扫码登录（小红书、闲鱼、抖音、B站）或导入 Cookie（X、微博等），同一平台支持多个账号
+- **聚合浏览**：一个关键词并排搜索多个平台；并排看各平台推荐流；查看帖子详情和评论；可以把帖子引用为草稿
+- **一键发布**：文字、图片或视频写一次，勾选多个平台和账号；按各平台规则实时校验；支持平台专属字段（如闲鱼的价格、运费）和按平台单独改写文案
+- **定时发布与日历**：月视图展示，拖动即可改期；发布记录按平台、账号逐条显示状态，可手动重试
+
+## 界面
+
+- 概览首页：用 Bento 网格展示今日发布、待发布、失败任务、近 7 天成功率、发布量柱状图（可切换成表格）、即将发布的任务、最近动态、账号和通道状态
+- 浅色和深色两套主题，默认跟随系统，侧边栏底部可以手动切换
+- `⌘K`（Windows 上是 `Ctrl+K`）打开命令面板：跳转页面、切换主题，或直接输入关键词在所有平台搜索
+- 操作结果用右下角提示气泡显示，加载时显示骨架屏，窄屏下侧边栏会收进抽屉
+- 技术：设计变量全部写在 `frontend/src/index.css` 开头，图标用 [lucide](https://lucide.dev)，字体用 Inter（随前端打包，离线也能用）
+
+## 架构
+
+```
+frontend/  React + Vite + TypeScript         浏览器界面
+backend/   Rust (axum + SQLite + tokio)      API、任务队列、定时调度、静态文件托管
+runtime/   catbus-cli（npm，版本锁定）        平台适配层：签名、登录、各平台接口
+data/      运行时生成：mpf.db、上传的媒体、catbus 登录态
+```
+
+后端不重新实现各平台的签名算法，而是以子进程方式调用 [cv-cat/catbus](https://github.com/cv-cat/catbus)（MIT 协议）。catbus 会在 stdout 输出统一的 JSON 信封，后端解析后转给前端，逻辑集中在 `backend/src/catbus.rs`。平台的能力和发布规则集中定义在 `backend/src/platforms.rs`，前端通过 `/api/platforms` 读取，同一份定义同时用于前端提示和后端校验。
+
+发布流程：创建帖子后，会为每个（平台, 账号）各生成一条 `post_targets` 任务。调度器每 5 秒领取一批到期任务（`backend/src/scheduler.rs`）。同一账号的任务串行执行，相邻两条间隔约 20 秒，全局最多同时执行 3 条。
+
+**重试策略（防止重复发帖）**：只有 `NETWORK` 错误会自动重试，最多 3 次，按指数退避。catbus 在写操作可能已经生效时，会刻意报 `UPSTREAM` 而不是 `NETWORK`。其他错误一律标记为失败，需要人工确认后手动重试。服务重启时，还处于"发布中"的任务会被标记为失败，而不是自动重发。
+
+## 多通道发布（不依赖单一项目）
+
+每个平台可以配置多个**技术路线不同**的发布通道，按顺序尝试（在「通道设置」页调整）：
+
+| 通道 | 技术路线 | 覆盖平台 | 项目 |
+|---|---|---|---|
+| `catbus` | 逆向网页签名，直接发 HTTP 请求（内置） | 全部（视频号除外） | [cv-cat/catbus](https://github.com/cv-cat/catbus) |
+| `xhs-mcp` | 无头浏览器模拟操作 | 小红书（发布、搜索、信息流） | [xpzouying/xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp) |
+| `x-api` | X 官方 API v2，网页内 OAuth 2.0 授权，按量计费 | X | [docs.x.com](https://docs.x.com) |
+| `sau` | 浏览器自动化 | 抖音、快手、小红书、B站、微博视频、**视频号** | [dreammis/social-auto-upload](https://github.com/dreammis/social-auto-upload) |
+
+默认顺序：小红书 catbus → xhs-mcp → sau；X 是 官方 API → catbus；抖音、B站、快手、微博 catbus → sau；视频号只有 sau；闲鱼只有 catbus（目前没有找到独立实现的替代项目）。
+
+**什么时候会自动换下一个通道**：只有确定前一个通道**没有发出去**时才会换，包括：通道没安装或连不上、未登录、被风控拒绝、参数不支持、X 官方接口返回 4xx。只要结果不确定（超时、平台返回业务错误、浏览器自动化中途失败），就会停下来，在发布记录里显示每次尝试的结果。你确认平台上确实没发出去之后，可以用「换通道重试」指定另一个通道。
+
+**同一个账号对应多个通道的方式**：只要在各个通道里使用**相同的账号名**，它们就会被合并成一个账号。例如在「账号管理」里用 catbus 登录了小红书 `default`，再在「通道设置」里把一个 xiaohongshu-mcp 实例绑定为 `default`。
+
+读取类操作没有副作用，所以小红书的搜索和信息流在 catbus 失败时，会自动改用 xiaohongshu-mcp。
+
+## 运行
+
+依赖：Node 22+、Rust（`curl https://sh.rustup.rs -sSf | sh`）
+
+```bash
+./start.sh            # 安装依赖、构建前端、启动服务
+# 打开 http://127.0.0.1:8787
+```
+
+开发模式（前端热更新）：
+
+```bash
+cd runtime && npm install
+cd backend && cargo run                # :8787
+cd frontend && npm run dev             # :5173，/api 代理到 8787
+```
+
+### 配置（环境变量）
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MPF_BIND` | `127.0.0.1:8787` | 监听地址。给团队用时可以改成 `0.0.0.0:8787`，**并务必设置 `MPF_PASSWORD`** |
+| `MPF_PASSWORD` | 空 | 设置后所有请求都需要 HTTP Basic 认证（用户名任意） |
+| `MPF_DATA_DIR` | `./data` | 数据库、媒体文件、登录态的存放目录 |
+| `MPF_CATBUS_BIN` | `runtime/node_modules/.bin/catbus` | catbus 可执行文件路径 |
+| `MPF_STATIC_DIR` | `frontend/dist` | 前端构建产物目录 |
+| `RUST_LOG` | `info` | 日志级别 |
+
+通道配置（包括 X 的 token）保存在 `data/providers.json`，文件权限为 0600。
+
+## 测试
+
+```bash
+cd backend && cargo test     # 平台规则校验、各通道参数拼装、PKCE、数据格式转换、JSON 信封解析
+```
+
+## 已知限制
+
+- 闲鱼目前只能发布（catbus 的搜索和信息流还在规划中），也只有 catbus 一个发布通道。
+- xiaohongshu-mcp 需要和本服务运行在同一台机器上（发布时传的是本地文件路径），一个进程对应一个账号。
+- sau 登录要在终端里执行 `sau <平台> login --account <名字>`（会打开浏览器）；sau 失败时一律不自动重试或换通道。
+- X 官方 API 需要在开发者后台创建应用、配置回调地址并充值；回调地址默认是 `http://<MPF_BIND>/api/oauth/x/callback`。
+- 小红书扫码后如果被要求短信或人机验证，网页端无法完成，需要改用 Cookie 导入。
+- 平台图片使用 `referrerPolicy=no-referrer` 直接加载，个别 CDN 可能仍有防盗链。
+- 账号名会作为 catbus 的参数和目录名使用，只允许字母、数字、中文和 `_ - .`。
+
+## 风险提示
+
+小红书、闲鱼、X 等平台都没有给第三方开放发帖接口。catbus 通过逆向网页端接口实现这些功能，可能违反平台的用户协议，也有封号风险。建议：
+
+- 只在本机或自己的服务器上使用自己的账号，不要做成替他人托管账号的服务；
+- 控制发帖频率，新号先养一段时间再发；
+- 平台更新后签名可能失效，需要升级 `runtime/` 中的 catbus 版本（`npm update catbus-cli`）。
