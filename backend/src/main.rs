@@ -2,6 +2,7 @@ mod api;
 mod catbus;
 mod config;
 mod db;
+mod engage;
 mod login;
 mod platforms;
 mod posts;
@@ -44,9 +45,12 @@ async fn main() -> anyhow::Result<()> {
         http: reqwest::Client::builder().user_agent("mpf-server").connect_timeout(std::time::Duration::from_secs(10)).build()?,
         x_pending: Default::default(),
         works_cache: Default::default(),
+        sync: Default::default(),
         config: Arc::new(config.clone()),
     };
     tokio::spawn(scheduler::run(state.clone()));
+    tokio::spawn(engage::sync::run(state.clone()));
+    tokio::spawn(engage::auto::run(state.clone()));
 
     // The app always serves at the root. When exposed under a path prefix
     // (e.g. /mpf/ on the VPS), the reverse proxy strips the prefix before

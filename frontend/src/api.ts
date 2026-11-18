@@ -174,6 +174,8 @@ export type Post = {
   topics: string[]
   scheduled_at: string | null
   created_at: string
+  first_comment: string | null
+  first_comment_delay: number | null
   targets: Target[]
 }
 
@@ -195,6 +197,8 @@ export type NewPost = {
   tags: string[]
   topics: string[]
   scheduled_at: string | null
+  first_comment?: string | null
+  first_comment_delay?: number | null
   targets: NewTarget[]
 }
 
@@ -206,6 +210,102 @@ export type LoginStatus = {
   message: string | null
   qrcode_ready: boolean
   started_at: string
+}
+
+// ---- engagement: analytics, inbox, automation ----
+
+/** Platforms where catbus can post comments (mirrors backend engage::CAPS). */
+export const COMMENT_PLATFORMS = ['douyin', 'bilibili', 'x']
+
+export const METRICS = ['views', 'likes', 'comments', 'collects', 'shares'] as const
+export type Metric = (typeof METRICS)[number]
+export const METRIC_LABEL: Record<Metric, string> = { views: '播放/阅读', likes: '点赞', comments: '评论', collects: '收藏', shares: '分享' }
+export type Metrics = Record<Metric, number | null>
+
+export type AccountSync = { platform: string; account: string; ok: boolean; error: string | null; items: number; new_inbox: number; at: string }
+export type SyncStatus = { running: boolean; started_at: string | null; finished_at: string | null; next_at: string | null; accounts: AccountSync[] }
+
+export type AnalyticsSummary = {
+  platforms: (Metrics & { platform: string; works: number; accounts: number; synced_at: string | null })[]
+  totals: Metrics
+  last7: Metrics
+  daily: (Metrics & { date: string })[]
+  sync: SyncStatus
+}
+
+export type TrackedItem = {
+  platform: string
+  account: string
+  item_id: string
+  kind: string | null
+  title: string | null
+  url: string | null
+  cover: string | null
+  published_at: string | null
+  post_id: string | null
+  synced_at: string
+  stats: Metrics
+  delta24h: Metrics
+}
+
+export type InboxKind = 'comment' | 'mention' | 'dm'
+export type InboxItem = {
+  id: string
+  platform: string
+  account: string
+  kind: InboxKind
+  item_id: string | null
+  item_url: string | null
+  item_title: string | null
+  author: { id: string | null; name: string | null; url: string | null; avatar: string | null }
+  text: string | null
+  created_at: string | null
+  fetched_at: string
+  sort_key: string
+  is_read: boolean
+  replied_at: string | null
+  reply_text: string | null
+  can_reply: boolean
+}
+export type UnreadCounts = Partial<Record<InboxKind, number>> & { total: number }
+export type Message = { id: string; conversation_id: string; from: UserRef | null; type: string; text: string | null; created_at: string | null }
+
+export type AutomationSettings = { sync_minutes: number; window_days: number; daily_limit: number; auto_enabled: boolean }
+export type Rule = {
+  id: string
+  kind: 'keyword' | 'milestone'
+  enabled: boolean
+  name: string
+  platform: string | null
+  account: string | null
+  keywords: string[]
+  metric: Metric | null
+  threshold: number | null
+  text: string
+  created_at: string
+}
+export type AutoAction = {
+  id: string
+  source: 'first_comment' | 'milestone' | 'keyword'
+  rule_id: string | null
+  rule_name: string | null
+  platform: string
+  account: string
+  item_id: string
+  item_title: string | null
+  item_url: string | null
+  reply_to: string | null
+  text: string
+  status: 'pending' | 'running' | 'success' | 'failed' | 'canceled'
+  run_at: string
+  error_code: string | null
+  error: string | null
+  updated_at: string
+}
+export type Automation = {
+  settings: AutomationSettings
+  rules: Rule[]
+  stats: { pending: number; sent24h: number; failed24h: number }
 }
 
 // When the app is served under a path prefix (e.g. /mpf/ behind a reverse
@@ -268,6 +368,28 @@ export const api = {
   deletePost: (id: string) => req<void>('DELETE', `/posts/${id}`),
   reschedule: (id: string, scheduled_at: string | null) => req<Post>('POST', `/posts/${id}/schedule`, { scheduled_at }),
   retryTarget: (id: string, provider?: string) => req<Target>('POST', `/targets/${id}/retry?${qs({ provider })}`),
+
+  analytics: (days: number) => req<AnalyticsSummary>('GET', `/analytics/summary?${qs({ days, tz: -new Date().getTimezoneOffset() })}`),
+  trackedItems: (sort: string, platform?: string) => req<TrackedItem[]>('GET', `/analytics/items?${qs({ sort, platform, limit: 200 })}`),
+  itemHistory: (platform: string, account: string, id: string) =>
+    req<(Metrics & { at: string })[]>('GET', `/analytics/items/${platform}/${encodeURIComponent(account)}/${encodeURIComponent(id)}`),
+  syncStatus: () => req<SyncStatus>('GET', '/sync'),
+  syncNow: () => req<{ ok: boolean; already_running: boolean }>('POST', '/sync'),
+
+  inbox: (q: { kind?: string; platform?: string; unread?: boolean; before?: string }) =>
+    req<{ items: InboxItem[]; has_more: boolean; unread: UnreadCounts }>('GET', `/inbox?${qs({ ...q, unread: q.unread ? 'true' : undefined, limit: 50 })}`),
+  inboxUnread: () => req<UnreadCounts>('GET', '/inbox/unread'),
+  markRead: (b: { ids?: string[]; all?: boolean; read?: boolean }) => req<{ unread: UnreadCounts }>('POST', '/inbox/read', b),
+  reply: (id: string, text: string) => req<InboxItem>('POST', `/inbox/${encodeURIComponent(id)}/reply`, { text }),
+  messages: (id: string) => req<Envelope<Message[] | null>>('GET', `/inbox/${encodeURIComponent(id)}/messages`),
+
+  automation: () => req<Automation>('GET', '/automation'),
+  setAutomation: (b: AutomationSettings) => req<AutomationSettings>('PUT', '/automation/settings', b),
+  createRule: (r: Omit<Rule, 'id' | 'created_at'>) => req<Rule>('POST', '/automation/rules', r),
+  updateRule: (r: Rule) => req<Rule>('PUT', `/automation/rules/${r.id}`, r),
+  deleteRule: (id: string) => req<void>('DELETE', `/automation/rules/${id}`),
+  autoActions: () => req<AutoAction[]>('GET', '/automation/actions?limit=100'),
+  cancelAction: (id: string) => req<unknown>('POST', `/automation/actions/${id}/cancel`),
 
   providers: () => req<ProvidersOverview>('GET', '/providers'),
   setOrder: (platform: string, order: string[]) => req<unknown>('PUT', '/providers/order', { platform, order }),

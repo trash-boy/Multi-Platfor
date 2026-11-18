@@ -134,9 +134,12 @@ async fn execute(state: &AppState, target_id: &str) -> anyhow::Result<()> {
         match outcome {
             Outcome::Success { item_id, item_url, raw } => {
                 log.push(attempt(provider, true, None, None));
-                return finish(state, target_id, "success", Some(provider), None, None, item_id.as_deref(), item_url.as_deref(), &log)
-                    .await
-                    .and(store_result(state, target_id, &raw).await);
+                finish(state, target_id, "success", Some(provider), None, None, item_id.as_deref(), item_url.as_deref(), &log).await?;
+                store_result(state, target_id, &raw).await?;
+                if let Err(e) = crate::engage::auto::on_target_success(state, target_id).await {
+                    tracing::error!(target_id, "queue first comment: {e:#}");
+                }
+                return Ok(());
             }
             Outcome::Failed { code, message, safe_to_fallback, retry_later } => {
                 log.push(attempt(provider, false, Some(&code), Some(&message)));

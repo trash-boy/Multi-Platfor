@@ -1,5 +1,6 @@
 mod accounts;
 mod discover;
+mod engage;
 mod posts;
 mod providers;
 mod works;
@@ -45,4 +46,20 @@ pub fn router() -> Router<AppState> {
         .route("/providers/sau/bin", put(providers::sau_set_bin))
         .route("/providers/sau/{platform}/{account}", delete(providers::sau_remove))
         .route("/providers/sau/{platform}/{account}/check", get(providers::sau_check))
+        // engagement: analytics, inbox, automation
+        .route("/analytics/summary", get(engage::summary))
+        .route("/analytics/items", get(engage::items))
+        .route("/analytics/items/{platform}/{account}/{item_id}", get(engage::item_history))
+        .route("/sync", get(engage::sync_status).post(engage::sync_now))
+        .route("/inbox", get(engage::inbox))
+        .route("/inbox/unread", get(engage::inbox_unread))
+        .route("/inbox/read", post(engage::inbox_read))
+        .route("/inbox/{id}/reply", post(engage::inbox_reply))
+        .route("/inbox/{id}/messages", get(engage::inbox_messages))
+        .route("/automation", get(engage::automation))
+        .route("/automation/settings", put(engage::set_automation))
+        .route("/automation/rules", post(engage::create_rule))
+        .route("/automation/rules/{id}", put(engage::update_rule).delete(engage::delete_rule))
+        .route("/automation/actions", get(engage::actions))
+        .route("/automation/actions/{id}/cancel", post(engage::cancel_action))
 }
