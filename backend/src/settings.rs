@@ -13,6 +13,27 @@ pub struct Settings {
     pub xhs_mcp: XhsMcpSettings,
     pub x_api: XApiSettings,
     pub sau: SauSettings,
+    pub automation: AutomationSettings,
+}
+
+/// Data collection and auto-engagement (see engage/).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutomationSettings {
+    /// Pull stats / comments / DMs every N minutes. 0 disables background sync.
+    pub sync_minutes: u32,
+    /// Only works published within this many days get stats snapshots and comment pulls.
+    pub window_days: u32,
+    /// Max automatic comments per account per rolling 24h (all rule kinds together).
+    pub daily_limit: u32,
+    /// Master switch for automatic comments (sync keeps running when off).
+    pub auto_enabled: bool,
+}
+
+impl Default for AutomationSettings {
+    fn default() -> Self {
+        Self { sync_minutes: 120, window_days: 14, daily_limit: 20, auto_enabled: true }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

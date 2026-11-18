@@ -1,4 +1,4 @@
-import { Bot, CalendarDays, Cable, Compass, LayoutDashboard, ListChecks, PenSquare, Users, type LucideIcon } from 'lucide-react'
+import { BarChart3, Bot, CalendarDays, Cable, Compass, Inbox, LayoutDashboard, ListChecks, PenSquare, Users, Zap, type LucideIcon } from 'lucide-react'
 
 export type NavItem = { to: string; label: string; icon: LucideIcon; desc: string }
 
@@ -17,6 +17,14 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { to: '/compose', label: '一键发布', icon: PenSquare, desc: '写一次，发到多个平台' },
       { to: '/posts', label: '发布记录', icon: ListChecks, desc: '每个平台的发布状态' },
       { to: '/calendar', label: '发布日历', icon: CalendarDays, desc: '定时任务月视图' },
+    ],
+  },
+  {
+    label: '运营',
+    items: [
+      { to: '/analytics', label: '数据', icon: BarChart3, desc: '作品播放、点赞、评论的增长' },
+      { to: '/inbox', label: '收件箱', icon: Inbox, desc: '各平台评论、@ 和私信' },
+      { to: '/automation', label: '自动互动', icon: Zap, desc: '首评、达标追评、关键词回复' },
     ],
   },
   {

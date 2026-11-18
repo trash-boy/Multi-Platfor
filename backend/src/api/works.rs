@@ -67,6 +67,8 @@ async fn build(s: &AppState) -> ApiResult<Value> {
                 "me".into(),
                 "--limit".into(),
                 MAX_ITEMS.to_string(),
+                "-a".into(),
+                account.clone(),
             ];
             let env = cb.run(args, None, PER_ACCOUNT_TIMEOUT).await;
             (platform, account, env)

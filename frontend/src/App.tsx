@@ -6,7 +6,12 @@ import { ToastProvider } from './components/toast'
 import CommandPalette from './components/CommandPalette'
 import { NAV, NAV_GROUPS } from './nav'
 import { useTheme, type ThemePref } from './theme'
+import { UNREAD_EVENT } from './inboxEvents'
+import { api } from './api'
 import Accounts from './pages/Accounts'
+import Analytics from './pages/Analytics'
+import Automation from './pages/Automation'
+import Inbox from './pages/Inbox'
 import Calendar from './pages/Calendar'
 import Compose from './pages/Compose'
 import Dashboard from './pages/Dashboard'
@@ -26,6 +31,7 @@ function Shell() {
   const [theme, setTheme] = useTheme()
   const [cmdk, setCmdk] = useState(false)
   const [menu, setMenu] = useState(false)
+  const [unread, setUnread] = useState(0)
   const loc = useLocation()
   const current = NAV.find((n) => (n.to === '/' ? loc.pathname === '/' : loc.pathname.startsWith(n.to)))
 
@@ -38,6 +44,19 @@ function Shell() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Inbox badge: poll every minute, and take fresh counts from the inbox page.
+  useEffect(() => {
+    const poll = () => api.inboxUnread().then((u) => setUnread(u.total)).catch(() => undefined)
+    poll()
+    const t = setInterval(poll, 60_000)
+    const on = (e: Event) => setUnread((e as CustomEvent<number>).detail)
+    window.addEventListener(UNREAD_EVENT, on)
+    return () => {
+      clearInterval(t)
+      window.removeEventListener(UNREAD_EVENT, on)
+    }
   }, [])
 
   // Close the mobile drawer on navigation.
@@ -73,6 +92,7 @@ function Shell() {
                     <I size={17} />
                     <span className="grow">{n.label}</span>
                     {n.to === '/accounts' && accounts.length > 0 && <span className="count">{accounts.length}</span>}
+                    {n.to === '/inbox' && unread > 0 && <span className="count hot">{unread > 99 ? '99+' : unread}</span>}
                   </NavLink>
                 )
               })}
@@ -125,6 +145,9 @@ function Shell() {
               <Route path="/compose" element={<Compose />} />
               <Route path="/posts" element={<Posts />} />
               <Route path="/calendar" element={<Calendar />} />
+              <Route path="/analytics" element={<Analytics />} />
+              <Route path="/inbox" element={<Inbox />} />
+              <Route path="/automation" element={<Automation />} />
               <Route path="/accounts" element={<Accounts />} />
               <Route path="/providers" element={<Providers />} />
               <Route path="*" element={<Navigate to="/" replace />} />

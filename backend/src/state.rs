@@ -19,6 +19,8 @@ pub struct AppState {
     pub x_pending: x_api::Pending,
     /// Cached aggregate of each account's published works (see api::works).
     pub works_cache: Arc<tokio::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>>>,
+    /// Background stats / inbox collector (engage::sync).
+    pub sync: crate::engage::sync::Handle,
 }
 
 /// API error rendered as `{"error": "...", "details": [...]}`.

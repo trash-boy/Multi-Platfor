@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight, CircleCheck, CircleX, ImagePlus, Loader2, Se
 import { useMemo, useRef, useState } from 'react'
 import { useToast } from '../components/toast'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { mediaUrl, api, ApiError, charLen, fromLocalInput, validate, xWeight, type Media, type NewTarget, type Platform } from '../api'
+import { mediaUrl, api, ApiError, COMMENT_PLATFORMS, charLen, fromLocalInput, validate, xWeight, type Media, type NewTarget, type Platform } from '../api'
 import { PageHeader, PlatformBadge } from '../components/ui'
 import { useStore } from '../store'
 
@@ -35,6 +35,8 @@ export default function Compose() {
   const [cfg, setCfg] = useState<Record<string, TargetCfg>>({}) // by platform
   const [mode, setMode] = useState<'now' | 'later'>('now')
   const [when, setWhen] = useState('')
+  const [firstComment, setFirstComment] = useState('')
+  const [firstDelay, setFirstDelay] = useState(10)
   const [uploading, setUploading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<{ msg: string; details: string[] } | null>(null)
@@ -139,6 +141,8 @@ export default function Compose() {
         tags: splitList(tags),
         topics: splitList(topics),
         scheduled_at,
+        first_comment: firstComment.trim() || null,
+        first_comment_delay: firstComment.trim() ? firstDelay : null,
         targets,
       })
       toast('success', scheduled_at ? '已加入定时队列' : '已开始发布', `${targets.length} 个账号`)
@@ -388,6 +392,14 @@ export default function Compose() {
             )
           })}
 
+          <FirstComment
+            text={firstComment}
+            setText={setFirstComment}
+            delay={firstDelay}
+            setDelay={setFirstDelay}
+            platforms={[...new Set(selected.map((k) => k.split('/')[0]))].map((id) => platforms.find((p) => p.id === id)).filter((p): p is Platform => !!p)}
+          />
+
           <section className="card">
             <h3>发布时间</h3>
             <label className="field check">
@@ -417,5 +429,44 @@ export default function Compose() {
         </aside>
       </div>
     </div>
+  )
+}
+
+function FirstComment({
+  text,
+  setText,
+  delay,
+  setDelay,
+  platforms,
+}: {
+  text: string
+  setText: (v: string) => void
+  delay: number
+  setDelay: (v: number) => void
+  platforms: Platform[]
+}) {
+  const ok = platforms.filter((p) => COMMENT_PLATFORMS.includes(p.id))
+  const skip = platforms.filter((p) => !COMMENT_PLATFORMS.includes(p.id))
+  return (
+    <section className="card">
+      <h3>发布后首评（可选）</h3>
+      <textarea rows={3} maxLength={500} placeholder="发布成功后，自动在自己的帖子下评论一条，比如补充链接、引导互动" value={text} onChange={(e) => setText(e.target.value)} />
+      {text.trim() && (
+        <>
+          <label className="field inline">
+            <span>发布后</span>
+            <select value={delay} onChange={(e) => setDelay(Number(e.target.value))}>
+              {[3, 10, 30, 60, 180].map((m) => (
+                <option key={m} value={m}>
+                  {m < 60 ? `${m} 分钟` : `${m / 60} 小时`}
+                </option>
+              ))}
+            </select>
+          </label>
+          {ok.length > 0 && <p className="muted small">会在 {ok.map((p) => p.name).join('、')} 上评论（另加最多 90 秒随机延迟）。</p>}
+          {skip.length > 0 && <p className="muted small">{skip.map((p) => p.name).join('、')} 暂不支持自动评论，会跳过。</p>}
+        </>
+      )}
+    </section>
   )
 }

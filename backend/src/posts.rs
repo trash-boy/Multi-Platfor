@@ -95,6 +95,9 @@ pub struct Post {
     pub topics: Vec<String>,
     pub scheduled_at: Option<String>,
     pub created_at: String,
+    /// Comment posted on each published target after `first_comment_delay` minutes.
+    pub first_comment: Option<String>,
+    pub first_comment_delay: Option<i64>,
     pub targets: Vec<Target>,
 }
 
@@ -130,6 +133,10 @@ pub struct NewPost {
     pub topics: Vec<String>,
     #[serde(default)]
     pub scheduled_at: Option<String>,
+    #[serde(default)]
+    pub first_comment: Option<String>,
+    #[serde(default)]
+    pub first_comment_delay: Option<i64>,
     pub targets: Vec<NewTarget>,
 }
 
@@ -177,6 +184,8 @@ async fn post_from_row(db: &SqlitePool, r: &SqliteRow) -> anyhow::Result<Post> {
         topics: serde_json::from_str(r.get::<&str, _>("topics")).unwrap_or_default(),
         scheduled_at: r.get("scheduled_at"),
         created_at: r.get("created_at"),
+        first_comment: r.get("first_comment"),
+        first_comment_delay: r.get("first_comment_delay"),
         targets,
         id,
     })

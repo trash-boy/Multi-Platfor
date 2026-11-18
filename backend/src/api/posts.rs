@@ -108,7 +108,11 @@ pub async fn create(State(s): State<AppState>, Json(b): Json<NewPost>) -> ApiRes
     let now = db::now();
     let post_id = uuid::Uuid::new_v4().to_string();
     let mut tx = s.db.begin().await?;
-    sqlx::query("INSERT INTO posts (id, title, text, images, video, cover, tags, topics, scheduled_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    let first_comment = b.first_comment.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    if first_comment.is_some_and(|t| t.chars().count() > 500) {
+        return Err(ApiError::bad_request("首评不能超过 500 字"));
+    }
+    sqlx::query("INSERT INTO posts (id, title, text, images, video, cover, tags, topics, scheduled_at, created_at, first_comment, first_comment_delay) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(&post_id)
         .bind(b.title.as_deref().map(str::trim).filter(|t| !t.is_empty()))
         .bind(&b.text)
@@ -119,6 +123,8 @@ pub async fn create(State(s): State<AppState>, Json(b): Json<NewPost>) -> ApiRes
         .bind(serde_json::to_string(&b.topics)?)
         .bind(&scheduled_at)
         .bind(&now)
+        .bind(first_comment)
+        .bind(first_comment.map(|_| b.first_comment_delay.unwrap_or(10).clamp(1, 24 * 60)))
         .execute(&mut *tx)
         .await?;
     for t in &b.targets {

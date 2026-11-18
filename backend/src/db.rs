@@ -45,6 +45,88 @@ const SCHEMA: &[&str] = &[
     )",
     "CREATE INDEX IF NOT EXISTS idx_targets_due ON post_targets(status, run_at)",
     "CREATE INDEX IF NOT EXISTS idx_targets_post ON post_targets(post_id)",
+    // ---- engagement: own works + stats snapshots (see engage/sync.rs) ----
+    "CREATE TABLE IF NOT EXISTS items (
+        platform TEXT NOT NULL,
+        account TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        kind TEXT,
+        title TEXT,
+        url TEXT,
+        cover TEXT,
+        published_at TEXT,
+        target_id TEXT,
+        views INTEGER, likes INTEGER, comments INTEGER, collects INTEGER, shares INTEGER,
+        comments_seen INTEGER,
+        first_seen TEXT NOT NULL,
+        synced_at TEXT NOT NULL,
+        PRIMARY KEY (platform, account, item_id)
+    )",
+    "CREATE TABLE IF NOT EXISTS item_stats (
+        platform TEXT NOT NULL,
+        account TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        at TEXT NOT NULL,
+        views INTEGER, likes INTEGER, comments INTEGER, collects INTEGER, shares INTEGER
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_item_stats ON item_stats(at, platform, account, item_id)",
+    // ---- engagement: unified inbox (comments, mentions, DM conversations) ----
+    "CREATE TABLE IF NOT EXISTS inbox (
+        id TEXT PRIMARY KEY,
+        platform TEXT NOT NULL,
+        account TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        item_id TEXT,
+        item_url TEXT,
+        item_title TEXT,
+        parent_id TEXT,
+        author_id TEXT,
+        author_name TEXT,
+        author_url TEXT,
+        author_avatar TEXT,
+        text TEXT,
+        created_at TEXT,
+        fetched_at TEXT NOT NULL,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        replied_at TEXT,
+        reply_text TEXT
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_inbox_time ON inbox(COALESCE(created_at, fetched_at))",
+    // ---- engagement: automation rules and their action queue (engage/auto.rs) ----
+    "CREATE TABLE IF NOT EXISTS auto_rules (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        name TEXT NOT NULL,
+        platform TEXT,
+        account TEXT,
+        keywords TEXT NOT NULL DEFAULT '[]',
+        metric TEXT,
+        threshold INTEGER,
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )",
+    "CREATE TABLE IF NOT EXISTS auto_actions (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        rule_id TEXT,
+        target_id TEXT,
+        platform TEXT NOT NULL,
+        account TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        reply_to TEXT,
+        dedup TEXT NOT NULL UNIQUE,
+        text TEXT NOT NULL,
+        status TEXT NOT NULL,
+        run_at TEXT NOT NULL,
+        error_code TEXT,
+        error TEXT,
+        comment_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_auto_due ON auto_actions(status, run_at)",
 ];
 
 pub async fn connect(data_dir: &Path) -> anyhow::Result<SqlitePool> {
@@ -68,6 +150,16 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
         ("provider", "ALTER TABLE post_targets ADD COLUMN provider TEXT"),
         ("force_provider", "ALTER TABLE post_targets ADD COLUMN force_provider TEXT"),
         ("attempt_log", "ALTER TABLE post_targets ADD COLUMN attempt_log TEXT NOT NULL DEFAULT '[]'"),
+    ];
+    for (col, stmt) in add {
+        if !cols.iter().any(|c| c == col) {
+            sqlx::query(*stmt).execute(pool).await?;
+        }
+    }
+    let cols: Vec<String> = sqlx::query("PRAGMA table_info(posts)").fetch_all(pool).await?.iter().map(|r| r.get::<String, _>("name")).collect();
+    let add: &[(&str, &str)] = &[
+        ("first_comment", "ALTER TABLE posts ADD COLUMN first_comment TEXT"),
+        ("first_comment_delay", "ALTER TABLE posts ADD COLUMN first_comment_delay INTEGER"),
     ];
     for (col, stmt) in add {
         if !cols.iter().any(|c| c == col) {
