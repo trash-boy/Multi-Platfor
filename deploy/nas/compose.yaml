@@ -19,9 +19,12 @@ services:
       TZ: Asia/Shanghai
     volumes:
       - /vol1/1000/local-services/mpf/data-final:/app/data
-    # LAN access; the NAS relay tunnel forwards VPS 127.0.0.1:18787 here (/mpf/).
+    # LAN access.
     ports:
       - "18787:8787"
+    # The VPS tunnel (project local-services-relay) lives on this network and
+    # forwards VPS 127.0.0.1:18787 (nginx /mpf/) to the container name mpf:8787.
+    networks: [default, local-services]
     logging: &logging
       driver: json-file
       options:
@@ -54,3 +57,8 @@ services:
           sleep "$$INTERVAL"
         done
     logging: *logging
+
+networks:
+  local-services:
+    name: local-services_default
+    external: true
