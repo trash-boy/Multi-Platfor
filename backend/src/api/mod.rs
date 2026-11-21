@@ -21,6 +21,7 @@ pub fn router() -> Router<AppState> {
         .route("/accounts/{platform}/{account}", delete(accounts::logout))
         .route("/login/{platform}", post(accounts::qr_start).get(accounts::qr_status).delete(accounts::qr_cancel))
         .route("/login/{platform}/qrcode", get(accounts::qr_image))
+        .route("/login/{platform}/code", post(accounts::qr_code))
         .route("/search", get(discover::search))
         .route("/feed", get(discover::feed))
         .route("/item", get(discover::item))

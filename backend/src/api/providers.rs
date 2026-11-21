@@ -101,9 +101,11 @@ pub async fn x_callback(State(s): State<AppState>, Query(q): Query<Callback>) ->
         (Some(code), Some(st), None) => x_api::finish(&s, &st, &code).await.map_err(|e| format!("{e:#}")),
         _ => Err("回调缺少 code/state".into()),
     };
+    // Relative to /api/oauth/x/callback so it also works behind a path prefix
+    // that the reverse proxy strips (e.g. /mpf/api/oauth/x/callback → /mpf/providers).
     let target = match result {
-        Ok(acc) => format!("/providers?x_ok={}", urlencode(&format!("@{}", acc.username))),
-        Err(e) => format!("/providers?x_error={}", urlencode(&e)),
+        Ok(acc) => format!("../../../providers?x_ok={}", urlencode(&format!("@{}", acc.username))),
+        Err(e) => format!("../../../providers?x_error={}", urlencode(&e)),
     };
     Redirect::to(&target).into_response()
 }

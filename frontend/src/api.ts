@@ -1,4 +1,5 @@
 // Types mirror the Rust backend and catbus' normalized objects.
+import { BASE } from './base'
 
 export type OptionSpec = {
   key: string
@@ -206,9 +207,11 @@ export type LoginStatus = {
   id: string
   platform: string
   account: string
-  state: 'waiting' | 'scanned' | 'success' | 'failed'
+  /** verify: second verification required; need_code: waiting for the SMS code */
+  state: 'waiting' | 'scanned' | 'verify' | 'need_code' | 'success' | 'failed'
   message: string | null
   qrcode_ready: boolean
+  qr_seq: number
   started_at: string
 }
 
@@ -309,9 +312,8 @@ export type Automation = {
 }
 
 // When the app is served under a path prefix (e.g. /mpf/ behind a reverse
-// proxy), import.meta.env.BASE_URL is that prefix. Root-relative API and media
-// URLs must carry it; external (http...) URLs pass through untouched.
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, '') // '' or '/mpf'
+// proxy), root-relative API and media URLs must carry it; external (http...)
+// URLs pass through untouched.
 /** Prefix a backend root-relative URL ('/media/x', '/api/..') with the base path. */
 export const mediaUrl = (u: string | null | undefined): string => (u && u.startsWith('/') && !u.startsWith('//') ? BASE + u : (u ?? ''))
 
@@ -347,6 +349,7 @@ export const api = {
   cookieLogin: (p: string, account: string, cookie: string) => req<Envelope<unknown>>('POST', `/accounts/${p}/cookie`, { account, cookie }),
   qrStart: (p: string, account: string) => req<LoginStatus>('POST', `/login/${p}`, { account }),
   qrStatus: (p: string) => req<LoginStatus>('GET', `/login/${p}`),
+  qrCode: (p: string, code: string) => req<LoginStatus>('POST', `/login/${p}/code`, { code }),
   qrCancel: (p: string) => req<unknown>('DELETE', `/login/${p}`),
   qrImageUrl: (p: string, bust: string) => `${BASE}/api/login/${p}/qrcode?t=${encodeURIComponent(bust)}`,
 

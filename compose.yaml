@@ -1,0 +1,23 @@
+# 聚合台 — docker compose up -d --build
+# Settings come from .env next to this file (copy .env.example).
+services:
+  mpf:
+    build: .
+    image: mpf:latest
+    container_name: mpf
+    restart: unless-stopped
+    environment:
+      # Exposed beyond localhost, so a password is mandatory.
+      MPF_PASSWORD: ${MPF_PASSWORD:?在 .env 里设置 MPF_PASSWORD}
+      TZ: ${TZ:-Asia/Shanghai}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${MPF_PORT:-8787}:8787"
+    volumes:
+      # mpf.db, uploaded media, catbus login state. Must be writable by uid 1000.
+      - ${MPF_DATA:-./data}:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

@@ -62,6 +62,31 @@ data/      运行时生成：mpf.db、上传的媒体、catbus 登录态
 
 ## 运行
 
+### Docker（推荐）
+
+```bash
+cp .env.example .env        # 至少改 MPF_PASSWORD
+docker compose up -d --build
+# 打开 http://<主机>:8787，用户名任意，密码为 MPF_PASSWORD
+```
+
+- 一个镜像包含后端、前端和锁定版本的 catbus；数据（`mpf.db`、媒体、catbus 登录态）在宿主机的 `MPF_DATA` 目录（默认 `./data`），容器以 uid 1000 运行，这个目录需要它可写。原来用 `start.sh` 跑出来的 `data/` 可以直接挂进去。
+- 健康检查：`GET /healthz`（不需要认证）。
+- 国内网络构建慢时可以传镜像源：`docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com --build-arg CARGO_MIRROR=sparse+https://rsproxy.cn/index/`
+- 在 Mac（arm64）上给 x86 NAS 构建：`docker buildx build --platform linux/amd64 -t mpf:latest --load .`，再 `docker save mpf:latest | gzip > mpf.tar.gz` 拷过去 `docker load`。
+- sau、xiaohongshu-mcp 这些外部通道不在镜像里；xiaohongshu-mcp 发布时传的是本地文件路径，需要和容器共享 `data/` 目录才能用。
+
+**挂在反向代理子路径下**（例如 `https://example.com/mpf/`）：不需要重新构建，反向代理把前缀去掉再转发即可，同一个实例可以同时从根路径和子路径访问。前端在运行时自动识别前缀。nginx 示例：
+
+```nginx
+location /mpf/ {
+    proxy_pass http://127.0.0.1:8787/;   # 结尾的 / 会去掉 /mpf 前缀
+    client_max_body_size 1g;             # 上传视频
+}
+```
+
+### 本机直接运行
+
 依赖：Node 22+、Rust（`curl https://sh.rustup.rs -sSf | sh`）
 
 ```bash
@@ -86,6 +111,7 @@ cd frontend && npm run dev             # :5173，/api 代理到 8787
 | `MPF_DATA_DIR` | `./data` | 数据库、媒体文件、登录态的存放目录 |
 | `MPF_CATBUS_BIN` | `runtime/node_modules/.bin/catbus` | catbus 可执行文件路径 |
 | `MPF_STATIC_DIR` | `frontend/dist` | 前端构建产物目录 |
+| `MPF_BASE` | `./` | 仅构建时（vite）。默认相对路径、运行时识别前缀，一般不用设 |
 | `RUST_LOG` | `info` | 日志级别 |
 
 通道配置（包括 X 的 token）保存在 `data/providers.json`，文件权限为 0600。
@@ -102,6 +128,7 @@ cd backend && cargo test     # 平台规则校验、各通道参数拼装、PKCE
 - xiaohongshu-mcp 需要和本服务运行在同一台机器上（发布时传的是本地文件路径），一个进程对应一个账号。
 - sau 登录要在终端里执行 `sau <平台> login --account <名字>`（会打开浏览器）；sau 失败时一律不自动重试或换通道。
 - X 官方 API 需要在开发者后台创建应用、配置回调地址并充值；回调地址默认是 `http://<MPF_BIND>/api/oauth/x/callback`。
+- 抖音扫码后常被风控要求二次验证（error 2046）：如果提供了短信方式，网页会弹出验证码输入框，输入后继续登录；只有人脸或密码方式时需要在抖音 App 里完成，不行就改用 Cookie 导入。
 - 小红书扫码后如果被要求短信或人机验证，网页端无法完成，需要改用 Cookie 导入。
 - 平台图片使用 `referrerPolicy=no-referrer` 直接加载，个别 CDN 可能仍有防盗链。
 - 账号名会作为 catbus 的参数和目录名使用，只允许字母、数字、中文和 `_ - .`。

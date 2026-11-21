@@ -5,12 +5,13 @@ import '@fontsource-variable/inter'
 import './index.css'
 import App from './App.tsx'
 import { initTheme } from './theme'
+import { BASE } from './base'
 
 initTheme()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter basename={import.meta.env.BASE_URL}>
+    <BrowserRouter basename={BASE || '/'}>
       <App />
     </BrowserRouter>
   </StrictMode>,
