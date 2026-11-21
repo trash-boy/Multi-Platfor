@@ -148,7 +148,22 @@ function QrLogin({ p, account, onClose, onDone }: { p: Platform; account: string
   const [st, setSt] = useState<LoginStatus | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [round, setRound] = useState(0)
+  const [code, setCode] = useState('')
+  const [sending, setSending] = useState(false)
   const finished = useRef(false)
+
+  const submitCode = async (value: string) => {
+    setSending(true)
+    setErr(null)
+    try {
+      setSt(await api.qrCode(p.id, value))
+      setCode('')
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setSending(false)
+    }
+  }
 
   useEffect(() => {
     let stop = false
@@ -207,10 +222,47 @@ function QrLogin({ p, account, onClose, onDone }: { p: Platform; account: string
             <p>{st.message ?? '登录失败'}</p>
             <button onClick={() => setRound((r) => r + 1)}>重新获取二维码</button>
           </div>
+        ) : st?.state === 'need_code' ? (
+          <form
+            className="qr-code-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (/^\d{6}$/.test(code)) void submitCode(code)
+            }}
+          >
+            <p>{st.message}</p>
+            <input
+              autoFocus
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder="6 位验证码"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+            />
+            <div className="actions">
+              <button type="button" className="ghost" disabled={sending} onClick={() => void submitCode('')}>
+                跳过，在 App 里验证
+              </button>
+              <button type="submit" className="primary" disabled={sending || code.length !== 6}>
+                {sending ? '提交中…' : '提交验证码'}
+              </button>
+            </div>
+          </form>
         ) : st?.qrcode_ready ? (
           <>
-            <img src={api.qrImageUrl(p.id, st.id)} alt="登录二维码" className={st.state === 'scanned' ? 'scanned' : ''} />
-            <p>{st.state === 'scanned' ? '已扫码，请在手机上确认' : `打开${p.name} App 扫一扫`}</p>
+            <img
+              src={api.qrImageUrl(p.id, `${st.id}-${st.qr_seq}`)}
+              alt="登录二维码"
+              className={st.state === 'waiting' ? '' : 'scanned'}
+            />
+            <p>
+              {st.state === 'verify'
+                ? st.message
+                : st.state === 'scanned'
+                  ? '已扫码，请在手机上确认'
+                  : `打开${p.name} App 扫一扫`}
+            </p>
           </>
         ) : (
           <div className="spinner">正在获取二维码…</div>
@@ -218,7 +270,7 @@ function QrLogin({ p, account, onClose, onDone }: { p: Platform; account: string
         {err && <p className="error-text">{err}</p>}
       </div>
       <p className="muted small">
-        二维码几分钟内有效。如果扫码后被要求人机验证或短信验证，网页端暂时无法完成，请改用「导入 Cookie」。
+        二维码几分钟内有效。抖音扫码后如果要求短信验证，可以直接在这里输入验证码；其他人机验证网页端无法完成，请改用「导入 Cookie」。
       </p>
       {st?.state === 'success' && (
         <div className="actions">

@@ -13,14 +13,15 @@ mod state;
 
 use axum::{
     extract::{Request, State},
-    http::{header, StatusCode},
+    handler::HandlerWithoutStateExt,
+    http::{header, StatusCode, Uri},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     Router,
 };
 use base64::Engine;
-use std::sync::Arc;
-use tower_http::services::{ServeDir, ServeFile};
+use std::{path::PathBuf, sync::Arc};
+use tower_http::services::ServeDir;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -54,14 +55,22 @@ async fn main() -> anyhow::Result<()> {
 
     // The app always serves at the root. When exposed under a path prefix
     // (e.g. /mpf/ on the VPS), the reverse proxy strips the prefix before
-    // forwarding, so the backend never sees it. The frontend is built with a
-    // matching base so its own asset/API URLs carry the prefix in the browser.
-    let spa = ServeDir::new(&config.static_dir).fallback(ServeFile::new(config.static_dir.join("index.html")));
+    // forwarding, so the backend never sees it. The frontend is built with
+    // relative asset URLs; index.html is told which path the backend saw and
+    // derives the prefix in the browser (see spa_index), so one build works at
+    // the root and under any prefix at the same time.
+    let index = config.static_dir.join("index.html");
+    let spa = ServeDir::new(&config.static_dir)
+        .append_index_html_on_directories(false)
+        .fallback((move |uri: Uri| spa_index(index.clone(), uri)).into_service());
     let app = Router::new()
         .nest("/api", api::router())
         .nest_service("/media", ServeDir::new(config.media_dir()))
         .fallback_service(spa)
         .layer(middleware::from_fn_with_state(state.clone(), basic_auth))
+        // Added after the auth layer, so it stays public: liveness probe for
+        // Docker/compose healthchecks. Reveals nothing but "ok".
+        .route("/healthz", axum::routing::get(|| async { "ok" }))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&config.bind).await?;
@@ -71,6 +80,22 @@ async fn main() -> anyhow::Result<()> {
     }
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Serve index.html for any non-file path, telling the page which path the
+/// backend received so it can compute the reverse-proxy prefix.
+async fn spa_index(index: PathBuf, uri: Uri) -> Response {
+    match tokio::fs::read_to_string(&index).await {
+        Ok(html) => {
+            let html = html.replace("__MPF_PATH__", &html_attr_escape(uri.path()));
+            ([(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-cache")], html).into_response()
+        }
+        Err(_) => (StatusCode::NOT_FOUND, "前端未构建：请在 frontend/ 下执行 npm run build").into_response(),
+    }
+}
+
+fn html_attr_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// Optional HTTP Basic auth (any username, password = MPF_PASSWORD). Browsers

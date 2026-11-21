@@ -1,0 +1,56 @@
+# NAS deployment (fnOS Docker, compose project "mpf" in /vol1/1000/mpf).
+#
+# CI pushes ghcr.io/trash-boy/multi-platfor:latest on every commit to main;
+# the updater below polls for it and recreates mpf when the image changed.
+# Rollback: pin MPF_IMAGE to an older sha-xxxxxxx tag in .env and restart.
+#
+# Host paths are absolute: the updater runs compose from inside a container,
+# so relative paths would be resolved against its own filesystem.
+name: mpf
+
+services:
+  mpf:
+    image: ${MPF_IMAGE:-ghcr.io/trash-boy/multi-platfor:latest}
+    container_name: mpf
+    restart: unless-stopped
+    # Existing production data and its server.env (MPF_PASSWORD).
+    env_file: /vol1/1000/local-services/mpf/data-final/server.env
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - /vol1/1000/local-services/mpf/data-final:/app/data
+    # LAN access; the NAS relay tunnel forwards VPS 127.0.0.1:18787 here (/mpf/).
+    ports:
+      - "18787:8787"
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  updater:
+    image: docker:cli
+    container_name: mpf-updater
+    restart: unless-stopped
+    depends_on: [mpf]
+    environment:
+      INTERVAL: ${UPDATE_INTERVAL:-300}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /vol1/1000/mpf:/vol1/1000/mpf:ro
+    working_dir: /vol1/1000/mpf
+    # Only touches the mpf service; `up -d` is a no-op unless the pull got a new image.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        while true; do
+          if docker compose pull -q mpf; then
+            docker compose up -d --no-deps mpf
+            docker image prune -f --filter label=org.opencontainers.image.source=https://github.com/trash-boy/Multi-Platfor >/dev/null
+          else
+            echo "$(date -Iseconds) pull failed, will retry"
+          fi
+          sleep "$$INTERVAL"
+        done
+    logging: *logging

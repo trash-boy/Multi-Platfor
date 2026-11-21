@@ -2,7 +2,26 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!--
+      The backend fills mpf-path with the request path it received. If a
+      reverse proxy stripped a prefix (e.g. /mpf), the browser's path is longer
+      by exactly that prefix; set <base href> to it before any asset loads.
+    -->
+    <meta name="mpf-path" content="__MPF_PATH__" />
+    <script>
+      ;(function () {
+        var seen = document.querySelector('meta[name=mpf-path]').content
+        var path = location.pathname
+        var base = '/'
+        if (seen.charAt(0) === '/' && path.length >= seen.length && path.slice(path.length - seen.length) === seen) {
+          base = path.slice(0, path.length - seen.length).replace(/\/+$/, '') + '/'
+        }
+        var el = document.createElement('base')
+        el.href = base
+        document.head.appendChild(el)
+      })()
+    </script>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>聚合台 · 多平台聚合与发布</title>
   </head>

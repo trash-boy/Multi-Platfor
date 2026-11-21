@@ -133,6 +133,22 @@ pub async fn qr_status(State(s): State<AppState>, Path(platform): Path<String>) 
     s.logins.status(&platform).await.map(Json).ok_or_else(ApiError::not_found)
 }
 
+#[derive(Deserialize)]
+pub struct QrCode {
+    #[serde(default)]
+    pub code: String,
+}
+
+/// Submit the SMS code for a second verification (Douyin 2046). Empty = skip.
+pub async fn qr_code(State(s): State<AppState>, Path(platform): Path<String>, Json(b): Json<QrCode>) -> ApiResult<impl IntoResponse> {
+    known(&platform)?;
+    let code = b.code.trim();
+    if !code.is_empty() && !(code.len() == 6 && code.bytes().all(|c| c.is_ascii_digit())) {
+        return Err(ApiError::bad_request("验证码应为 6 位数字"));
+    }
+    s.logins.submit_code(&platform, code).await.map(Json).map_err(ApiError::bad_request)
+}
+
 pub async fn qr_cancel(State(s): State<AppState>, Path(platform): Path<String>) -> ApiResult<Json<Value>> {
     known(&platform)?;
     s.logins.cancel(&platform).await;
