@@ -331,6 +331,8 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     method,
     headers: body && !isForm ? { 'content-type': 'application/json' } : undefined,
     body: isForm ? body : body !== undefined ? JSON.stringify(body) : undefined,
+  }).catch(() => {
+    throw new ApiError('连接服务器失败（网络中断或服务正在重启），请稍后重试')
   })
   if (r.status === 204) return undefined as T
   const j = await r.json().catch(() => null)
@@ -360,10 +362,32 @@ export const api = {
   works: (refresh = false) => req<Works>('GET', `/works${refresh ? '?refresh=1' : ''}`),
   comments: (platform: string, item: string) => req<Envelope<Comment[] | null>>('GET', `/comments?${qs({ platform, item, limit: 30 })}`),
 
-  upload: (files: File[]) => {
+  upload: (files: File[], onProgress?: (fraction: number) => void) => {
     const fd = new FormData()
     files.forEach((f) => fd.append('file', f))
-    return req<Media[]>('POST', '/media', fd)
+    const mb = Math.round(files.reduce((n, f) => n + f.size, 0) / 1024 / 1024)
+    // XHR rather than fetch: fetch can't report upload progress.
+    return new Promise<Media[]>((resolve, reject) => {
+      const x = new XMLHttpRequest()
+      x.open('POST', BASE + '/api/media')
+      x.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total)
+      x.onload = () => {
+        let j: { error?: string; details?: string[] } | null = null
+        try {
+          j = JSON.parse(x.responseText)
+        } catch {
+          /* non-JSON, e.g. an nginx error page */
+        }
+        if (x.status >= 200 && x.status < 300) return resolve(j as unknown as Media[])
+        if (x.status === 413) return reject(new ApiError(`文件太大（${mb}MB），被服务器或反向代理拒绝`))
+        if (x.status === 502 || x.status === 504)
+          return reject(new ApiError(`上传 ${mb}MB 超时或网关断开（${x.status}）。大文件建议在局域网地址上传，或先压缩视频`))
+        reject(new ApiError(j?.error ?? `上传失败：${x.status} ${x.statusText}`, j?.details ?? []))
+      }
+      x.onerror = () => reject(new ApiError(`上传 ${mb}MB 时连接中断。可能是网络不稳、服务重启或反向代理超时；大文件建议在局域网地址上传，或先压缩视频`))
+      x.onabort = () => reject(new ApiError('上传已取消'))
+      x.send(fd)
+    })
   },
   posts: (from?: string, to?: string) => req<Post[]>('GET', `/posts?${qs({ from, to, limit: 300 })}`),
   createPost: (p: NewPost) => req<Post>('POST', '/posts', p),

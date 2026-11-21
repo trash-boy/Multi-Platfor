@@ -38,6 +38,7 @@ export default function Compose() {
   const [firstComment, setFirstComment] = useState('')
   const [firstDelay, setFirstDelay] = useState(10)
   const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<{ msg: string; details: string[] } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -76,9 +77,10 @@ export default function Compose() {
   async function upload(files: FileList | null, as: 'media' | 'cover') {
     if (!files?.length) return
     setUploading(true)
+    setProgress(0)
     setErr(null)
     try {
-      const saved = await api.upload([...files])
+      const saved = await api.upload([...files], setProgress)
       if (as === 'cover') {
         setCover(saved.find((m) => m.kind === 'image') ?? null)
       } else {
@@ -227,7 +229,7 @@ export default function Compose() {
               )}
               <button className="add-media" onClick={() => fileRef.current?.click()} disabled={uploading}>
                 {uploading ? <Loader2 size={20} className="spin" /> : <ImagePlus size={20} />}
-                {uploading ? '上传中…' : '添加或拖入'}
+                {uploading ? (progress < 1 ? `上传中 ${Math.floor(progress * 100)}%` : '保存中…') : '添加或拖入'}
               </button>
               <input ref={fileRef} type="file" hidden multiple accept="image/*,video/*" onChange={(e) => upload(e.target.files, 'media')} />
             </div>
@@ -247,8 +249,8 @@ export default function Compose() {
                     </div>
                   </div>
                 )}
-                <button className="add-media" onClick={() => coverRef.current?.click()}>
-                  {cover ? '更换封面' : '+ 上传封面'}
+                <button className="add-media" onClick={() => coverRef.current?.click()} disabled={uploading}>
+                  {uploading ? `上传中 ${Math.floor(progress * 100)}%` : cover ? '更换封面' : '+ 上传封面'}
                 </button>
                 <input ref={coverRef} type="file" hidden accept="image/*" onChange={(e) => upload(e.target.files, 'cover')} />
               </div>

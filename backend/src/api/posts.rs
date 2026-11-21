@@ -16,7 +16,7 @@ const MEDIA_LIMIT: usize = 1024 * 1024 * 1024;
 
 pub async fn upload_media(State(s): State<AppState>, mut mp: Multipart) -> ApiResult<Json<Value>> {
     let mut saved = Vec::new();
-    while let Some(field) = mp.next_field().await.map_err(|e| ApiError::bad_request(e.to_string()))? {
+    while let Some(mut field) = mp.next_field().await.map_err(|e| ApiError::bad_request(e.to_string()))? {
         let filename = field.file_name().unwrap_or("upload").to_string();
         let mime = field.content_type().unwrap_or("application/octet-stream").to_string();
         let kind = if mime.starts_with("image/") {
@@ -34,24 +34,44 @@ pub async fn upload_media(State(s): State<AppState>, mut mp: Multipart) -> ApiRe
             .unwrap_or_else(|| mime.rsplit('/').next().unwrap_or("bin").to_string());
         let id = uuid::Uuid::new_v4().to_string();
         let stored = format!("{id}.{ext}");
-        let bytes = field.bytes().await.map_err(|e| ApiError::bad_request(e.to_string()))?;
-        if bytes.len() > MEDIA_LIMIT {
-            return Err(ApiError::bad_request("文件超过 1GB"));
-        }
-        tokio::fs::write(s.config.media_dir().join(&stored), &bytes).await?;
+        let path = s.config.media_dir().join(&stored);
+        let size = match save_field(&mut field, &path).await {
+            Ok(n) => n,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&path).await;
+                return Err(e);
+            }
+        };
         sqlx::query("INSERT INTO media (id, filename, stored, mime, kind, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
             .bind(&id)
             .bind(&filename)
             .bind(&stored)
             .bind(&mime)
             .bind(kind)
-            .bind(bytes.len() as i64)
+            .bind(size as i64)
             .bind(db::now())
             .execute(&s.db)
             .await?;
-        saved.push(json!({ "id": id, "filename": filename, "kind": kind, "mime": mime, "size": bytes.len(), "url": format!("/media/{stored}") }));
+        saved.push(json!({ "id": id, "filename": filename, "kind": kind, "mime": mime, "size": size, "url": format!("/media/{stored}") }));
     }
     Ok(Json(json!(saved)))
+}
+
+/// Stream one multipart field to `path` chunk by chunk, so a large video never
+/// sits in memory. Returns the byte count; the caller removes `path` on error.
+async fn save_field(field: &mut axum::extract::multipart::Field<'_>, path: &std::path::Path) -> ApiResult<usize> {
+    use tokio::io::AsyncWriteExt;
+    let mut file = tokio::fs::File::create(path).await?;
+    let mut size = 0usize;
+    while let Some(chunk) = field.chunk().await.map_err(|e| ApiError::bad_request(format!("上传中断：{e}")))? {
+        size += chunk.len();
+        if size > MEDIA_LIMIT {
+            return Err(ApiError::bad_request("文件超过 1GB"));
+        }
+        file.write_all(&chunk).await?;
+    }
+    file.flush().await?;
+    Ok(size)
 }
 
 pub async fn create(State(s): State<AppState>, Json(b): Json<NewPost>) -> ApiResult<(StatusCode, Json<Post>)> {
