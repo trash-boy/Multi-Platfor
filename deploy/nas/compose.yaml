@@ -41,6 +41,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /vol1/1000/mpf:/vol1/1000/mpf:ro
+      # compose reads env_file on the client side, i.e. inside this container.
+      - /vol1/1000/local-services/mpf/data-final/server.env:/vol1/1000/local-services/mpf/data-final/server.env:ro
     working_dir: /vol1/1000/mpf
     # Only touches the mpf service; `up -d` is a no-op unless the pull got a new image.
     entrypoint:
