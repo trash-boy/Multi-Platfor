@@ -76,6 +76,8 @@ docker compose up -d --build
 - 在 Mac（arm64）上给 x86 NAS 构建：`docker buildx build --platform linux/amd64 -t mpf:latest --load .`，再 `docker save mpf:latest | gzip > mpf.tar.gz` 拷过去 `docker load`。
 - sau、xiaohongshu-mcp 这些外部通道不在镜像里；xiaohongshu-mcp 发布时传的是本地文件路径，需要和容器共享 `data/` 目录才能用。
 
+**CI/CD**：推到 `main` 后，GitHub Actions（`.github/workflows/docker.yml`）先跑测试，再构建 `linux/amd64` 镜像推到 `ghcr.io/trash-boy/multi-platfor`（标签 `latest` 和 `sha-<提交>`）。NAS 上用 `deploy/nas/compose.yaml`，其中的 `updater` 容器每 5 分钟拉一次镜像，有新版本就重建 mpf，NAS 不需要开放任何入站端口。回滚：在 NAS 的 `/vol1/1000/mpf/.env` 里写 `MPF_IMAGE=ghcr.io/trash-boy/multi-platfor:sha-xxxxxxx`，然后重启项目。
+
 **挂在反向代理子路径下**（例如 `https://example.com/mpf/`）：不需要重新构建，反向代理把前缀去掉再转发即可，同一个实例可以同时从根路径和子路径访问。前端在运行时自动识别前缀。nginx 示例：
 
 ```nginx
