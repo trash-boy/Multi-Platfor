@@ -242,7 +242,7 @@ function QrLogin({ p, account, onClose, onDone }: { p: Platform; account: string
             />
             <div className="actions">
               <button type="button" className="ghost" disabled={sending} onClick={() => void submitCode('')}>
-                跳过，在 App 里验证
+                {p.id === 'douyin' ? '跳过，在 App 里验证' : '放弃登录'}
               </button>
               <button type="submit" className="primary" disabled={sending || code.length !== 6}>
                 {sending ? '提交中…' : '提交验证码'}
@@ -270,7 +270,7 @@ function QrLogin({ p, account, onClose, onDone }: { p: Platform; account: string
         {err && <p className="error-text">{err}</p>}
       </div>
       <p className="muted small">
-        二维码几分钟内有效。抖音扫码后如果要求短信验证，可以直接在这里输入验证码；其他人机验证网页端无法完成，请改用「导入 Cookie」。
+        二维码几分钟内有效。抖音、小红书扫码后如果要求短信验证，可以直接在这里输入验证码；其他人机验证网页端无法完成，请改用「导入 Cookie」。
       </p>
       {st?.state === 'success' && (
         <div className="actions">

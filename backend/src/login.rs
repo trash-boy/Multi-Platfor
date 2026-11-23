@@ -6,6 +6,10 @@
 //! then sends an SMS code and reads it from stdin. We keep the child's stdin
 //! open so the browser can submit that code (`submit_code`); with a closed stdin
 //! catbus silently skips the SMS step and the login can never complete.
+//!
+//! Xiaohongshu does the same after the phone confirms (471 + verifyType 120):
+//! catbus runs the web SmsCaptcha flow, sends a code to the bound phone and
+//! reads it from stdin, allowing up to 3 tries; an empty line aborts the login.
 
 use crate::catbus::{parse_envelope, stderr_tail, Catbus};
 use serde::Serialize;
@@ -48,8 +52,11 @@ enum LoginEvent {
     Scanned,
     /// Second verification required; message for the user.
     Verify(String),
-    /// SMS code sent, catbus now reads it from stdin.
-    NeedCode,
+    /// SMS code sent, catbus now reads it from stdin. Carries the masked
+    /// phone number when the line names it.
+    NeedCode(Option<String>),
+    /// The code was wrong and catbus reads another one (Xiaohongshu); message.
+    Retry(String),
     CodeOk,
     CodeBad,
 }
@@ -59,9 +66,19 @@ fn classify(line: &str) -> Option<LoginEvent> {
     let l = line.trim_start_matches("[catbus]").trim();
     if l.contains("二维码图片：") {
         Some(NewQr)
-    } else if l.contains("请输入短信验证码") {
-        Some(NeedCode)
-    } else if l.contains("验证码校验通过") {
+    } else if l.contains("请重新输入") {
+        // xhs: "小红书短信验证失败：…，请重新输入（还剩 2 次）："
+        let reason = l.split_once("，请重新输入").map(|(r, _)| r).unwrap_or(l);
+        let left = l.split_once("还剩 ").and_then(|(_, r)| r.split_once(' ')).map(|(n, _)| format!("，还能再试 {n} 次")).unwrap_or_default();
+        Some(Retry(format!("{reason}{left}。请重新输入 6 位短信验证码")))
+    } else if l.contains("请输入") && l.contains("短信验证码") {
+        // douyin: "验证码已发送，请输入短信验证码（6 位；…）"
+        // xhs:    "验证码已发送到 138****0000，请输入 6 位短信验证码（空行放弃）："
+        let mobile = l.split_once("已发送到 ").and_then(|(_, r)| r.split_once('，')).map(|(m, _)| m.trim().to_string());
+        Some(NeedCode(mobile))
+    } else if l.contains("小红书要求短信验证") {
+        Some(Verify("小红书风控要求短信验证，正在向账号绑定的手机发送验证码…".into()))
+    } else if l.contains("验证码校验通过") || l.contains("短信验证通过") {
         Some(CodeOk)
     } else if l.contains("验证码校验未通过") {
         Some(CodeBad)
@@ -149,14 +166,14 @@ impl LoginManager {
                         buf
                     });
                     let mut out = Vec::new();
-                    let waited = tokio::time::timeout(Duration::from_secs(330), async {
+                    let waited = tokio::time::timeout(Duration::from_secs(600), async {
                         let _ = stdout.read_to_end(&mut out).await;
                         child.wait().await
                     })
                     .await;
                     let err = if waited.is_ok() { err_task.await.unwrap_or_default() } else { err_task.abort(); Vec::new() };
                     let (state, message) = match waited {
-                        Err(_) => ("failed", Some("二维码已过期，请重新获取".to_string())),
+                        Err(_) => ("failed", Some("登录超时（二维码或验证码已过期），请重新获取".to_string())),
                         Ok(_) => {
                             let env = parse_envelope(&out, &err);
                             if env.ok {
@@ -195,7 +212,12 @@ impl LoginManager {
         pipe.write_all(format!("{code}\n").as_bytes()).await.map_err(|e| format!("提交失败：{e}"))?;
         let _ = pipe.flush().await;
         s.status.state = "verify".into();
-        s.status.message = Some(if code.is_empty() { "已跳过短信验证，请在抖音 App 里完成安全验证".into() } else { "正在校验验证码…".into() });
+        s.status.message = Some(match (code.is_empty(), s.status.platform == "douyin") {
+            (false, _) => "正在校验验证码…".into(),
+            (true, true) => "已跳过短信验证，请在抖音 App 里完成安全验证".into(),
+            // xhs: an empty line makes catbus give up the login.
+            (true, false) => "已放弃短信验证，正在结束登录…".into(),
+        });
         Ok(s.status.clone())
     }
 
@@ -222,6 +244,14 @@ impl LoginManager {
     }
 }
 
+fn platform_name(id: &str) -> &str {
+    match id {
+        "douyin" => "抖音",
+        "xhs" => "小红书",
+        other => other,
+    }
+}
+
 fn apply(s: &mut LoginStatus, ev: LoginEvent) {
     match ev {
         LoginEvent::NewQr => {
@@ -239,14 +269,26 @@ fn apply(s: &mut LoginStatus, ev: LoginEvent) {
             s.state = "verify".into();
             s.message = Some(m);
         }
-        LoginEvent::NeedCode => {
+        LoginEvent::NeedCode(mobile) => {
             s.state = "need_code".into();
-            let mobile = s.message.as_deref().and_then(|m| m.split_once('（')).and_then(|(_, r)| r.split_once('）')).map(|(m, _)| format!("（{m}）")).unwrap_or_default();
-            s.message = Some(format!("抖音风控要求二次验证，验证码已发送到手机{mobile}，请输入 6 位短信验证码"));
+            let mobile = mobile
+                .map(|m| format!("（{m}）"))
+                .or_else(|| s.message.as_deref().and_then(|m| m.split_once('（')).and_then(|(_, r)| r.split_once('）')).map(|(m, _)| format!("（{m}）")))
+                .unwrap_or_default();
+            let what = if s.platform == "douyin" { "二次验证" } else { "短信验证" };
+            s.message = Some(format!("{}风控要求{what}，验证码已发送到手机{mobile}，请输入 6 位短信验证码", platform_name(&s.platform)));
+        }
+        LoginEvent::Retry(m) => {
+            s.state = "need_code".into();
+            s.message = Some(m);
         }
         LoginEvent::CodeOk => {
             s.state = "verify".into();
-            s.message = Some("验证码校验通过，正在等待登录放行；如果手机上还有确认按钮，请点确认".into());
+            s.message = Some(if s.platform == "douyin" {
+                "验证码校验通过，正在等待登录放行；如果手机上还有确认按钮，请点确认".into()
+            } else {
+                "短信验证通过，正在完成登录…".into()
+            });
         }
         LoginEvent::CodeBad => {
             s.state = "verify".into();
@@ -260,7 +302,11 @@ mod tests {
     use super::*;
 
     fn st() -> LoginStatus {
-        LoginStatus { id: "1".into(), platform: "douyin".into(), account: "a".into(), state: "waiting".into(), message: None, qrcode_ready: false, qr_seq: 0, started_at: String::new() }
+        st_for("douyin")
+    }
+
+    fn st_for(platform: &str) -> LoginStatus {
+        LoginStatus { id: "1".into(), platform: platform.into(), account: "a".into(), state: "waiting".into(), message: None, qrcode_ready: false, qr_seq: 0, started_at: String::new() }
     }
 
     #[test]
@@ -281,6 +327,31 @@ mod tests {
         assert!(s.message.unwrap().contains("138****0000"));
         assert_eq!(classify("[catbus] 验证码校验通过，等待登录放行…"), Some(LoginEvent::CodeOk));
         assert_eq!(classify("[catbus] 验证码校验未通过，将继续等待（也可在 App 上完成验证）"), Some(LoginEvent::CodeBad));
+    }
+
+    #[test]
+    fn xhs_sms_verify_flow() {
+        let mut s = st_for("xhs");
+        let feed = |s: &mut LoginStatus, line: &str| {
+            if let Some(ev) = classify(line) {
+                apply(s, ev);
+            }
+        };
+        feed(&mut s, "[catbus] 请用小红书 App 扫码并确认。二维码图片：/data/catbus/cache/xhs/qrcode.png");
+        feed(&mut s, "[catbus] 已扫码，请在手机上确认");
+        assert_eq!(s.state, "scanned");
+        feed(&mut s, "[catbus] 小红书要求短信验证（verifyType 120），正在准备验证…");
+        assert_eq!(s.state, "verify");
+        feed(&mut s, "[catbus] 验证码已发送到 138****0000，请输入 6 位短信验证码（空行放弃）：");
+        assert_eq!(s.state, "need_code");
+        let m = s.message.clone().unwrap();
+        assert!(m.contains("小红书") && m.contains("138****0000"), "{m}");
+        s.state = "verify".into();
+        feed(&mut s, "[catbus] 小红书短信验证失败：验证码错误，请重新输入（还剩 2 次）：");
+        assert_eq!(s.state, "need_code");
+        assert!(s.message.clone().unwrap().contains("还能再试 2 次"));
+        feed(&mut s, "[catbus] 短信验证通过，继续登录");
+        assert_eq!(s.state, "verify");
     }
 
     #[test]
